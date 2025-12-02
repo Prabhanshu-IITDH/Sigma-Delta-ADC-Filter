@@ -13,7 +13,7 @@ module sigma_delta_top #(
     parameter integer FIR_COEF_FRAC = 23,
     parameter integer FIR_OUT_W     = 24,
     // Half-band params
-    parameter integer HB_TAPS       = 31,
+    parameter integer HB_TAPS       = 63,
     parameter integer HB_DATA_W     = 24,
     parameter integer HB_COEF_W     = 24,
     parameter integer HB_COEF_FRAC  = 23,
