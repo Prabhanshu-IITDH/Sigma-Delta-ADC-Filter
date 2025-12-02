@@ -33,10 +33,10 @@ module tb_sigma_delta;
     always #(CLK_PERIOD/2) clk = ~clk;
 
     // --- ADD THIS BLOCK FOR WAVEFORMS ---
-    initial begin
-        $dumpfile("waveform.vcd"); // Create the waveform file
-        $dumpvars(0, tb_sigma_delta); // Dump all variables in this testbench
-    end
+    // initial begin
+    //     $dumpfile("waveform.vcd"); // Create the waveform file
+    //     $dumpvars(0, tb_sigma_delta); // Dump all variables in this testbench
+    // end
 
     // 6. Main Stimulus Process
     initial begin
@@ -46,12 +46,12 @@ module tb_sigma_delta;
         $readmemb("input_stream.txt", mem_in); 
         
         // --- DEBUG: CHECK IF FILE LOADED ---
-        if (mem_in[0] === 1'bx) begin
-            $display("CRITICAL ERROR: input_stream.txt NOT LOADED! mem_in[0] is X");
-            $finish;
-        end else begin
-            $display("SUCCESS: Input file loaded. Bit 0 = %b", mem_in[0]);
-        end
+        // if (mem_in[0] === 1'bx) begin
+        //     $display("CRITICAL ERROR: input_stream.txt NOT LOADED! mem_in[0] is X");
+        //     $finish;
+        // end else begin
+        //     $display("SUCCESS: Input file loaded. Bit 0 = %b", mem_in[0]);
+        // end
         // -----------------------------------
 
         outfile = $fopen("output_capture.txt", "w");
