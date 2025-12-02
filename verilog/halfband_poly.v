@@ -4,7 +4,7 @@
 
 `timescale 1ns/1ps
 module halfband_poly #(
-    parameter integer HB_TAPS   = 31,    // odd
+    parameter integer HB_TAPS   = 63,    // odd
     parameter integer DATA_WIDTH= 24,
     parameter integer COEF_WIDTH= 24,
     parameter integer COEF_FRAC = 23,
