@@ -8,7 +8,7 @@ module fir_comb1 #(
     parameter integer DATA_WIDTH = 32,
     parameter integer COEF_WIDTH = 24,
     parameter integer COEF_FRAC  = 23,
-    parameter integer OUT_WIDTH  = 243
+    parameter integer OUT_WIDTH  = 24
 )(
     input  wire                          clk,
     input  wire                          rst_n,
