@@ -5,7 +5,7 @@
 // Output: Decimated data at 16 kHz
 //==============================================================================
 
-module iz_cic #(
+module cic_filter #(
     parameter INPUT_WIDTH  = 5,           // Input data width (signed)
     parameter R            = 8,           // Decimation factor
     parameter N            = 15,          // Number of stages
