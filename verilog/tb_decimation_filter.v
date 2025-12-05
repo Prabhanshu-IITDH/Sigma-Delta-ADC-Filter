@@ -6,7 +6,7 @@
 
 `timescale 1ns / 1ps
 
-module tb_sigma_delta;
+module tb_decimation_filter;
 
     //--------------------------------------------------------------------------
     // Parameters
