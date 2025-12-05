@@ -1,90 +1,108 @@
-module iz_cic (
-    input wire clk,
-    input wire rst,
-    input wire signed [4:0] data_in,
-    input wire data_valid,
-    output reg signed [49:0] data_out,
-    output reg out_valid
+//==============================================================================
+// CIC Decimation Filter
+// Parameters from MATLAB: R=8, N=15 stages, M=1
+// Input: 5-bit signed data at 128 kHz
+// Output: Decimated data at 16 kHz
+//==============================================================================
+
+module iz_cic #(
+    parameter INPUT_WIDTH  = 5,           // Input data width (signed)
+    parameter R            = 8,           // Decimation factor
+    parameter N            = 15,          // Number of stages
+    parameter M            = 1,           // Differential delay
+    // Calculated parameters
+    // Output bit growth = N * log2(R*M) = 15 * log2(8) = 15 * 3 = 45 bits
+    // Total width = INPUT_WIDTH + bit_growth = 5 + 45 = 50 bits
+    parameter INTERNAL_WIDTH = INPUT_WIDTH + N * $clog2(R*M)  // 50 bits
+)(
+    input  wire                          clk,
+    input  wire                          rst_n,
+    input  wire                          in_valid,
+    input  wire signed [INPUT_WIDTH-1:0] in_data,
+    output reg                           out_valid,
+    output reg  signed [INTERNAL_WIDTH-1:0] out_data
 );
 
-    // Parameters
-    parameter DECIMATION = 8;
-    parameter ORDER = 15;
+    // Internal signals for integrator stages
+    reg signed [INTERNAL_WIDTH-1:0] integrator [0:N-1];
     
-    // Bit growth calculation: ORDER * log2(DECIMATION) = 15 * 3 = 45 bits
-    // With 5-bit input: 5 + 45 = 50 bits required
-    
-    // Integrator registers (15 stages)
-    reg signed [49:0] integrator [0:14];
-    
-    // Comb registers (15 stages) 
-    reg signed [49:0] comb [0:14];
-    reg signed [49:0] comb_delay [0:14];
+    // Internal signals for comb stages (after decimation)
+    reg signed [INTERNAL_WIDTH-1:0] comb [0:N-1];
+    reg signed [INTERNAL_WIDTH-1:0] comb_delay [0:N-1];
     
     // Decimation counter
-    reg [3:0] dec_counter;
+    reg [$clog2(R)-1:0] decim_counter;
     
-    // Internal signals
-    wire sample_tick;
+    // Decimated sample
+    reg signed [INTERNAL_WIDTH-1:0] decimated_sample;
+    reg decimated_valid;
+    
+    // Sign-extended input
+    wire signed [INTERNAL_WIDTH-1:0] in_data_ext;
+    assign in_data_ext = {{(INTERNAL_WIDTH-INPUT_WIDTH){in_data[INPUT_WIDTH-1]}}, in_data};
+    
     integer i;
     
-    assign sample_tick = (dec_counter == DECIMATION - 1);
-    
-    // Integrator section (runs at input rate)
-    always @(posedge clk or posedge rst) begin
-        if (rst) begin
-            for (i = 0; i < ORDER; i = i + 1) begin
-                integrator[i] <= 50'd0;
+    //--------------------------------------------------------------------------
+    // Integrator Section (runs at input sample rate)
+    //--------------------------------------------------------------------------
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            for (i = 0; i < N; i = i + 1) begin
+                integrator[i] <= 0;
             end
-        end else if (data_valid) begin
+            decim_counter <= 0;
+            decimated_sample <= 0;
+            decimated_valid <= 0;
+        end else if (in_valid) begin
             // First integrator stage
-            integrator[0] <= integrator[0] + {{45{data_in[4]}}, data_in};
+            integrator[0] <= integrator[0] + in_data_ext;
             
-            // Remaining integrator stages
-            for (i = 1; i < ORDER; i = i + 1) begin
+            // Subsequent integrator stages
+            for (i = 1; i < N; i = i + 1) begin
                 integrator[i] <= integrator[i] + integrator[i-1];
             end
-        end
-    end
-    
-    // Decimation counter
-    always @(posedge clk or posedge rst) begin
-        if (rst) begin
-            dec_counter <= 4'd0;
-        end else if (data_valid) begin
-            if (sample_tick) begin
-                dec_counter <= 4'd0;
-            end else begin
-                dec_counter <= dec_counter + 1'b1;
-            end
-        end
-    end
-    
-    // Comb section (runs at decimated rate) with differential delay = 1
-    always @(posedge clk or posedge rst) begin
-        if (rst) begin
-            for (i = 0; i < ORDER; i = i + 1) begin
-                comb[i] <= 50'd0;
-                comb_delay[i] <= 50'd0;
-            end
-            data_out <= 50'd0;
-            out_valid <= 1'b0;
-        end else if (data_valid && sample_tick) begin
-            // First comb stage
-            comb[0] <= integrator[ORDER-1] - comb_delay[0];
-            comb_delay[0] <= integrator[ORDER-1];
             
-            // Remaining comb stages
-            for (i = 1; i < ORDER; i = i + 1) begin
+            // Decimation counter
+            if (decim_counter == R - 1) begin
+                decim_counter <= 0;
+                decimated_sample <= integrator[N-1];
+                decimated_valid <= 1;
+            end else begin
+                decim_counter <= decim_counter + 1;
+                decimated_valid <= 0;
+            end
+        end else begin
+            decimated_valid <= 0;
+        end
+    end
+    
+    //--------------------------------------------------------------------------
+    // Comb Section (runs at decimated sample rate)
+    //--------------------------------------------------------------------------
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            for (i = 0; i < N; i = i + 1) begin
+                comb[i] <= 0;
+                comb_delay[i] <= 0;
+            end
+            out_valid <= 0;
+            out_data <= 0;
+        end else if (decimated_valid) begin
+            // First comb stage
+            comb[0] <= decimated_sample - comb_delay[0];
+            comb_delay[0] <= decimated_sample;
+            
+            // Subsequent comb stages
+            for (i = 1; i < N; i = i + 1) begin
                 comb[i] <= comb[i-1] - comb_delay[i];
                 comb_delay[i] <= comb[i-1];
             end
             
-            // Output
-            data_out <= comb[ORDER-1];
-            out_valid <= 1'b1;
+            out_data <= comb[N-1];
+            out_valid <= 1;
         end else begin
-            out_valid <= 1'b0;
+            out_valid <= 0;
         end
     end
 
