@@ -5,7 +5,7 @@
 // Coefficients loaded from external .mem file
 //==============================================================================
 
-module halfband_poly #(
+module halfband_filter #(
     parameter INPUT_WIDTH  = 50,          // Input data width
     parameter COEFF_WIDTH  = 18,          // Coefficient width
     parameter NUM_TAPS     = 7,           // Number of filter taps (order + 1)
