@@ -1,110 +1,113 @@
-// halfband_poly.v
-// Polyphase Half-Band FIR (decimate-by-2)
-// FIXED FOR VIVADO (no in-block declarations)
+//==============================================================================
+// Half-Band Decimation Filter
+// Parameters from MATLAB: order 6, R=2
+// Half-band filters have symmetric coefficients with every other coefficient = 0
+// Coefficients loaded from external .mem file
+//==============================================================================
 
-`timescale 1ns/1ps
 module halfband_poly #(
-    parameter integer HB_TAPS   = 63,    // odd
-    parameter integer DATA_WIDTH= 24,
-    parameter integer COEF_WIDTH= 24,
-    parameter integer COEF_FRAC = 23,
-    parameter integer OUT_WIDTH = 24
+    parameter INPUT_WIDTH  = 50,          // Input data width
+    parameter COEFF_WIDTH  = 18,          // Coefficient width
+    parameter NUM_TAPS     = 7,           // Number of filter taps (order + 1)
+    parameter OUTPUT_WIDTH = 50,          // Output data width
+    parameter COEFF_FILE   = "hb1_coeffs.mem"  // Coefficient file name
 )(
-    input  wire                          clk,
-    input  wire                          rst_n,
-    input  wire signed [DATA_WIDTH-1:0]  data_in,
-    input  wire                          in_valid,
-    output reg signed [OUT_WIDTH-1:0]    data_out,
-    output reg                           out_valid
+    input  wire                           clk,
+    input  wire                           rst_n,
+    input  wire                           in_valid,
+    input  wire signed [INPUT_WIDTH-1:0]  in_data,
+    output reg                            out_valid,
+    output reg  signed [OUTPUT_WIDTH-1:0] out_data
 );
 
-    // L = (HB_TAPS-1)/2
-    localparam integer L = (HB_TAPS - 1) / 2;
-    localparam integer ACC_WIDTH = DATA_WIDTH + COEF_WIDTH + $clog2(L+2) + 2;
-
-    // Coefficients (ROM)
-    reg signed [COEF_WIDTH-1:0] coef_H0 [0:L];
-    reg signed [COEF_WIDTH-1:0] coef_H1 [0:L-1];
-
-    // Shift buffer
-    reg signed [DATA_WIDTH-1:0] shiftbuf [0:HB_TAPS-1];
-
-    // Phase toggle for decimation-by-2
-    reg phase;
-
-    // Declare all accumulator & temporary variables here (NOT inside always blocks)
-    integer s, k;
-    reg signed [ACC_WIDTH-1:0] acc0;
-    reg signed [ACC_WIDTH-1:0] acc1;
-    reg signed [ACC_WIDTH-1:0] acc_tot;
-    reg signed [ACC_WIDTH-1:0] acc_r;
-    reg signed [ACC_WIDTH-COEF_FRAC-1:0] acc_sh;
-    reg signed [ACC_WIDTH-COEF_FRAC-1:0] max_pos;
-    reg signed [ACC_WIDTH-COEF_FRAC-1:0] min_neg;
-    reg signed [OUT_WIDTH-1:0] out_sat;
-
+    // Decimation factor is always 2 for half-band
+    localparam R = 2;
+    
+    // Accumulator width: INPUT_WIDTH + COEFF_WIDTH + log2(NUM_TAPS)
+    localparam ACC_WIDTH = INPUT_WIDTH + COEFF_WIDTH + $clog2(NUM_TAPS);
+    
+    // Coefficient memory
+    reg signed [COEFF_WIDTH-1:0] coeffs [0:NUM_TAPS-1];
+    
+    // Delay line for input samples
+    reg signed [INPUT_WIDTH-1:0] delay_line [0:NUM_TAPS-1];
+    
+    // Decimation counter
+    reg decim_counter;
+    
+    // Accumulator
+    reg signed [ACC_WIDTH-1:0] acc;
+    
+    // Processing state machine
+    reg [1:0] state;
+    localparam IDLE = 2'd0;
+    localparam COMPUTE = 2'd1;
+    localparam OUTPUT = 2'd2;
+    
+    reg [$clog2(NUM_TAPS):0] tap_counter;
+    
+    integer i;
+    
+    // Load coefficients from memory file
     initial begin
-        $readmemh("hb_h0.mem", coef_H0);
-        $readmemh("hb_h1.mem", coef_H1);
+        $readmemh(COEFF_FILE, coeffs);
     end
-
+    
+    //--------------------------------------------------------------------------
+    // Half-Band Filter with Decimation by 2
+    //--------------------------------------------------------------------------
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            phase <= 0;
-            data_out <= 0;
-            out_valid <= 0;
-
-            for (s = 0; s < HB_TAPS; s = s + 1)
-                shiftbuf[s] <= 0;
-
-        end else begin
-            out_valid <= 0;
-
-            if (in_valid) begin
-                // Shift buffer
-                for (s = HB_TAPS-1; s > 0; s = s - 1)
-                    shiftbuf[s] <= shiftbuf[s-1];
-                shiftbuf[0] <= data_in;
-
-                // Toggle phase each input
-                phase <= ~phase;
-
-                if (phase) begin
-                    // reset accumulators
-                    acc0 = 0;
-                    acc1 = 0;
-
-                    // Even-phase polyphase branch
-                    for (k = 0; k <= L; k = k + 1) begin
-                        acc0 = acc0 + shiftbuf[2*k] * coef_H0[k];
-                        if (k < L)
-                            acc1 = acc1 + shiftbuf[2*k+1] * coef_H1[k];
-                    end
-
-                    // combine
-                    acc_tot = acc0 + acc1;
-
-                    // rounding
-                    acc_r = acc_tot + (1 <<< (COEF_FRAC-1));
-
-                    // shift back
-                    acc_sh = acc_r >>> COEF_FRAC;
-
-                    // saturation
-                    max_pos = (1 <<< (OUT_WIDTH-1)) - 1;
-                    min_neg = -(1 <<< (OUT_WIDTH-1));
-
-                    if (acc_sh > max_pos)
-                        out_sat = max_pos;
-                    else if (acc_sh < min_neg)
-                        out_sat = min_neg;
-                    else
-                        out_sat = acc_sh[OUT_WIDTH-1:0];
-
-                    data_out <= out_sat;
-                    out_valid <= 1;
-                end
+            for (i = 0; i < NUM_TAPS; i = i + 1) begin
+                delay_line[i] <= 0;
             end
+            decim_counter <= 0;
+            acc <= 0;
+            out_valid <= 0;
+            out_data <= 0;
+            state <= IDLE;
+            tap_counter <= 0;
+        end else begin
+            case (state)
+                IDLE: begin
+                    out_valid <= 0;
+                    if (in_valid) begin
+                        // Shift delay line
+                        for (i = NUM_TAPS-1; i > 0; i = i - 1) begin
+                            delay_line[i] <= delay_line[i-1];
+                        end
+                        delay_line[0] <= in_data;
+                        
+                        // Check decimation (output every other sample)
+                        if (decim_counter == 1) begin
+                            decim_counter <= 0;
+                            acc <= 0;
+                            tap_counter <= 0;
+                            state <= COMPUTE;
+                        end else begin
+                            decim_counter <= 1;
+                        end
+                    end
+                end
+                
+                COMPUTE: begin
+                    if (tap_counter < NUM_TAPS) begin
+                        // Half-band optimization: skip zero coefficients
+                        // In half-band filters, every other coefficient (except center) is 0
+                        acc <= acc + delay_line[tap_counter] * coeffs[tap_counter];
+                        tap_counter <= tap_counter + 1;
+                    end else begin
+                        state <= OUTPUT;
+                    end
+                end
+                
+                OUTPUT: begin
+                    // Scale output
+                    out_data <= acc[ACC_WIDTH-1 -: OUTPUT_WIDTH];
+                    out_valid <= 1;
+                    state <= IDLE;
+                end
+            endcase
         end
     end
 
