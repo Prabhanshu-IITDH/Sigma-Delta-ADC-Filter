@@ -5,7 +5,7 @@
 // Coefficients loaded from external .mem file
 //==============================================================================
 
-module fir_comb1 #(
+module fir_filter #(
     parameter INPUT_WIDTH  = 50,          // Input data width (from CIC)
     parameter COEFF_WIDTH  = 18,          // Coefficient width
     parameter NUM_TAPS     = 26,          // Number of filter taps (order + 1)
