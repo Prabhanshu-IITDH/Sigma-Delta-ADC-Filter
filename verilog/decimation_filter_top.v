@@ -11,7 +11,7 @@
 // Output: Decimated stream @ 2 kHz
 //==============================================================================
 
-module sigma_delta_top #(
+module decimation_filter_top #(
     parameter INPUT_WIDTH    = 5,         // Input: 5-bit signed
     parameter CIC_STAGES     = 15,        // CIC: 15 stages
     parameter CIC_R          = 8,         // CIC decimation factor
