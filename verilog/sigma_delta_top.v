@@ -1,91 +1,139 @@
-// sigma_delta_top.v
-// Top-level connecting iz_cic -> fir_comb -> halfband_poly
-`timescale 1ns/1ps
+//==============================================================================
+// Top Module: Multi-Stage Decimation Filter
+// Total Decimation: 64 (8 x 2 x 2 x 2)
+// 
+// Stage 1: CIC Filter (R=8, N=15 stages)
+// Stage 2: FIR Compensation Filter (R=2, 26 taps)
+// Stage 3: Half-Band Filter 1 (R=2, order 6)
+// Stage 4: Half-Band Filter 2 (R=2, order 6)
+//
+// Input: 5-bit signed @ 128 kHz
+// Output: Decimated stream @ 2 kHz
+//==============================================================================
+
 module sigma_delta_top #(
-    // CIC params
-    parameter integer CIC_ORDER = 3,
-    parameter integer CIC_R     = 64,
-    parameter integer CIC_M     = 1,
-    // FIR comp params
-    parameter integer FIR_NTAPS     = 63,
-    parameter integer FIR_DATA_W    = 32,
-    parameter integer FIR_COEF_W    = 24,
-    parameter integer FIR_COEF_FRAC = 23,
-    parameter integer FIR_OUT_W     = 24,
-    // Half-band params
-    parameter integer HB_TAPS       = 63,
-    parameter integer HB_DATA_W     = 24,
-    parameter integer HB_COEF_W     = 24,
-    parameter integer HB_COEF_FRAC  = 23,
-    parameter integer OUT_WIDTH     = 24
+    parameter INPUT_WIDTH    = 5,         // Input: 5-bit signed
+    parameter CIC_STAGES     = 15,        // CIC: 15 stages
+    parameter CIC_R          = 8,         // CIC decimation factor
+    parameter FIR_TAPS       = 26,        // FIR: 26 taps
+    parameter FIR_R          = 2,         // FIR decimation factor
+    parameter HB_ORDER       = 6,         // Half-band order
+    parameter HB_TAPS        = 7,         // Half-band taps (order + 1)
+    parameter COEFF_WIDTH    = 18,        // Coefficient bit width
+    parameter OUTPUT_WIDTH   = 32         // Final output width
 )(
-    input  wire clk,
-    input  wire rst_n,
-    input  wire data_in,      // 1-bit sigma-delta stream
-    input  wire data_valid,   // pulse at input sampling rate
-    output wire signed [OUT_WIDTH-1:0] pcm_out,
-    output wire out_valid
+    input  wire                          clk,
+    input  wire                          rst_n,
+    input  wire                          in_valid,
+    input  wire signed [INPUT_WIDTH-1:0] in_data,
+    output wire                          out_valid,
+    output wire signed [OUTPUT_WIDTH-1:0] out_data
 );
 
-    // compute CIC output width (match iz_cic internal formula)
-    localparam integer CIC_GROWTH = CIC_ORDER * $clog2(CIC_R);
-    localparam integer CIC_IN_EXT = 2;
-    localparam integer CIC_OUTW    = CIC_IN_EXT + CIC_GROWTH + 2;
-
-    // wires between modules
-    wire signed [CIC_OUTW-1:0] cic_out_data;
-    wire cic_out_valid;
-
-    // Instantiate CIC (make sure iz_cic.v is in project)
-    iz_cic #(
-        .ORDER(CIC_ORDER),
+    //--------------------------------------------------------------------------
+    // Internal width calculations
+    // CIC bit growth = N * log2(R*M) = 15 * 3 = 45
+    // CIC output width = 5 + 45 = 50 bits
+    //--------------------------------------------------------------------------
+    localparam CIC_OUTPUT_WIDTH = INPUT_WIDTH + CIC_STAGES * $clog2(CIC_R);
+    localparam FIR_OUTPUT_WIDTH = CIC_OUTPUT_WIDTH;
+    localparam HB1_OUTPUT_WIDTH = FIR_OUTPUT_WIDTH;
+    localparam HB2_OUTPUT_WIDTH = HB1_OUTPUT_WIDTH;
+    
+    //--------------------------------------------------------------------------
+    // Inter-stage connections
+    //--------------------------------------------------------------------------
+    // CIC output
+    wire                              cic_valid;
+    wire signed [CIC_OUTPUT_WIDTH-1:0] cic_data;
+    
+    // FIR output
+    wire                              fir_valid;
+    wire signed [FIR_OUTPUT_WIDTH-1:0] fir_data;
+    
+    // HB1 output
+    wire                              hb1_valid;
+    wire signed [HB1_OUTPUT_WIDTH-1:0] hb1_data;
+    
+    // HB2 output
+    wire                              hb2_valid;
+    wire signed [HB2_OUTPUT_WIDTH-1:0] hb2_data;
+    
+    //--------------------------------------------------------------------------
+    // Stage 1: CIC Decimation Filter (R=8)
+    //--------------------------------------------------------------------------
+    cic_filter #(
+        .INPUT_WIDTH(INPUT_WIDTH),
         .R(CIC_R),
-        .M(CIC_M),
-        .IN_WIDTH(1),
-        .SAFETY(2)
+        .N(CIC_STAGES),
+        .M(1)
     ) u_cic (
         .clk(clk),
         .rst_n(rst_n),
-        .data_in(data_in),
-        .data_valid(data_valid),
-        .cic_out_data(cic_out_data),
-        .cic_out_valid(cic_out_valid)
+        .in_valid(in_valid),
+        .in_data(in_data),
+        .out_valid(cic_valid),
+        .out_data(cic_data)
     );
-
-    // FIR compensation wires
-    wire signed [FIR_OUT_W-1:0] fir_out_data;
-    wire fir_out_valid;
-
-    // FIR compensation instance (loads fir_comp.mem)
-    fir_comb1 #(
-        .NTAPS(FIR_NTAPS),
-        .DATA_WIDTH(CIC_OUTW),
-        .COEF_WIDTH(FIR_COEF_W),
-        .COEF_FRAC(FIR_COEF_FRAC),
-        .OUT_WIDTH(FIR_OUT_W)
+    
+    //--------------------------------------------------------------------------
+    // Stage 2: FIR Compensation Filter (R=2)
+    //--------------------------------------------------------------------------
+    fir_filter #(
+        .INPUT_WIDTH(CIC_OUTPUT_WIDTH),
+        .COEFF_WIDTH(COEFF_WIDTH),
+        .NUM_TAPS(FIR_TAPS),
+        .R(FIR_R),
+        .OUTPUT_WIDTH(FIR_OUTPUT_WIDTH)
     ) u_fir (
         .clk(clk),
         .rst_n(rst_n),
-        .data_in(cic_out_data),
-        .in_valid(cic_out_valid),
-        .data_out(fir_out_data),
-        .out_valid(fir_out_valid)
+        .in_valid(cic_valid),
+        .in_data(cic_data),
+        .out_valid(fir_valid),
+        .out_data(fir_data)
     );
-
-    // Half-band instance
-    halfband_poly #(
-        .HB_TAPS(HB_TAPS),
-        .DATA_WIDTH(FIR_OUT_W),
-        .COEF_WIDTH(HB_COEF_W),
-        .COEF_FRAC(HB_COEF_FRAC),
-        .OUT_WIDTH(OUT_WIDTH)
-    ) u_hb (
+    
+    //--------------------------------------------------------------------------
+    // Stage 3: Half-Band Filter 1 (R=2)
+    //--------------------------------------------------------------------------
+    halfband_filter #(
+        .INPUT_WIDTH(FIR_OUTPUT_WIDTH),
+        .COEFF_WIDTH(COEFF_WIDTH),
+        .NUM_TAPS(HB_TAPS),
+        .OUTPUT_WIDTH(HB1_OUTPUT_WIDTH),
+        .COEFF_FILE("hb1_coeffs.mem")
+    ) u_hb1 (
         .clk(clk),
         .rst_n(rst_n),
-        .data_in(fir_out_data),
-        .in_valid(fir_out_valid),
-        .data_out(pcm_out),
-        .out_valid(out_valid)
+        .in_valid(fir_valid),
+        .in_data(fir_data),
+        .out_valid(hb1_valid),
+        .out_data(hb1_data)
     );
+    
+    //--------------------------------------------------------------------------
+    // Stage 4: Half-Band Filter 2 (R=2)
+    //--------------------------------------------------------------------------
+    halfband_filter #(
+        .INPUT_WIDTH(HB1_OUTPUT_WIDTH),
+        .COEFF_WIDTH(COEFF_WIDTH),
+        .NUM_TAPS(HB_TAPS),
+        .OUTPUT_WIDTH(HB2_OUTPUT_WIDTH),
+        .COEFF_FILE("hb2_coeffs.mem")
+    ) u_hb2 (
+        .clk(clk),
+        .rst_n(rst_n),
+        .in_valid(hb1_valid),
+        .in_data(hb1_data),
+        .out_valid(hb2_valid),
+        .out_data(hb2_data)
+    );
+    
+    //--------------------------------------------------------------------------
+    // Output assignment with bit truncation to final output width
+    //--------------------------------------------------------------------------
+    assign out_valid = hb2_valid;
+    assign out_data = hb2_data[HB2_OUTPUT_WIDTH-1 -: OUTPUT_WIDTH];
 
 endmodule
