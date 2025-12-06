@@ -12,7 +12,7 @@ module halfband_filter #(
     parameter OUTPUT_WIDTH = 50,          // Output data width
     parameter COEFF_FILE   = "hb1_coeffs.mem"  // Coefficient file name
 )(
-    input  wire                           clk,
+    input  wire                           clk,  
     input  wire                           rst_n,
     input  wire                           in_valid,
     input  wire signed [INPUT_WIDTH-1:0]  in_data,
