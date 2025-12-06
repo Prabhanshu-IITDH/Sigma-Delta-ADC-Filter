@@ -7,13 +7,14 @@
 
 module cic_filter #(
     parameter INPUT_WIDTH  = 5,           // Input data width (signed)
-    parameter R            = 8,           // Decimation factor
+    parameter R            = 16,           // Decimation factor
     parameter N            = 15,          // Number of stages
     parameter M            = 1,           // Differential delay
+    //parameter safety       = 1,
     // Calculated parameters
     // Output bit growth = N * log2(R*M) = 15 * log2(8) = 15 * 3 = 45 bits
     // Total width = INPUT_WIDTH + bit_growth = 5 + 45 = 50 bits
-    parameter INTERNAL_WIDTH = INPUT_WIDTH + N * $clog2(R*M)  // 50 bits
+    parameter INTERNAL_WIDTH = INPUT_WIDTH + N * $clog2(R*M)// 50 bits
 )(
     input  wire                          clk,
     input  wire                          rst_n,
