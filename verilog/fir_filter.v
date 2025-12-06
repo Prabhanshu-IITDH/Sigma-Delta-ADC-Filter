@@ -1,10 +1,3 @@
-//==============================================================================
-// FIR Compensation Filter with Decimation (PARALLEL VERSION)
-// Parameters from MATLAB: 26 taps (order 25), R=2
-// Compensates for CIC droop
-// Coefficients loaded from external .mem file
-//==============================================================================
-
 module fir_filter #(
     parameter INPUT_WIDTH  = 50,          // Input data width (from CIC)
     parameter COEFF_WIDTH  = 18,          // Coefficient width
@@ -22,30 +15,39 @@ module fir_filter #(
 
     // Accumulator width: INPUT_WIDTH + COEFF_WIDTH + log2(NUM_TAPS)
     localparam ACC_WIDTH = INPUT_WIDTH + COEFF_WIDTH + $clog2(NUM_TAPS);
-    
+
     // Coefficient memory
     reg signed [COEFF_WIDTH-1:0] coeffs [0:NUM_TAPS-1];
-    
+
     // Delay line for input samples
     reg signed [INPUT_WIDTH-1:0] delay_line [0:NUM_TAPS-1];
-    
+
     // Decimation counter
     reg [$clog2(R)-1:0] decim_counter;
-    
+
     integer i;
 
-    // Load coefficients from memory file
+    // Debug file
+    integer debug_f;
+    initial begin
+        debug_f = $fopen("debug_fir.txt", "w");
+        if (!debug_f) begin
+            $display("ERROR: Could not open debug_fir.txt");
+            $finish;
+        end
+    end
+
+    // Load FIR coefficients
     initial begin
         $readmemh("fir_coeffs.mem", coeffs);
     end
 
-    //--------------------------------------------------------------------------
-    // Parallel Multiplication & Summation
-    //--------------------------------------------------------------------------
-    // We compute the sum of products purely combinationaly (or you could pipeline this)
+    //----------------------------------------------------------------------
+    // Parallel Multiplication & Summation (Combinational)
+    //----------------------------------------------------------------------
     reg signed [ACC_WIDTH-1:0] sum_of_products;
     integer k;
-    
+
     always @(*) begin
         sum_of_products = 0;
         for (k = 0; k < NUM_TAPS; k = k + 1) begin
@@ -53,9 +55,9 @@ module fir_filter #(
         end
     end
 
-    //--------------------------------------------------------------------------
-    // FIR Logic
-    //--------------------------------------------------------------------------
+    //----------------------------------------------------------------------
+    // FIR Core Logic
+    //----------------------------------------------------------------------
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             for (i = 0; i < NUM_TAPS; i = i + 1) begin
@@ -65,31 +67,34 @@ module fir_filter #(
             out_valid <= 0;
             out_data <= 0;
         end else begin
-            out_valid <= 0; // Default
+            out_valid <= 0;
 
             if (in_valid) begin
-                // 1. Shift Delay Line (Always happens when input is valid)
+
+                //--------------------------------------------------------------
+                // 1. Shift Delay Line
+                //--------------------------------------------------------------
                 delay_line[0] <= in_data;
                 for (i = 1; i < NUM_TAPS; i = i + 1) begin
                     delay_line[i] <= delay_line[i-1];
                 end
 
-                // 2. Handle Decimation
+                //--------------------------------------------------------------
+                // DEBUG: Dump delay_line values to debug_fir.txt
+                //--------------------------------------------------------------
+                $fwrite(debug_f, "Time %0t : delay_line = ", $time);
+                for (i = 0; i < NUM_TAPS; i = i + 1) begin
+                    $fwrite(debug_f, "%0d ", delay_line[i]);
+                end
+                $fwrite(debug_f, "\n");
+
+                //--------------------------------------------------------------
+                // 2. Decimation logic
+                //--------------------------------------------------------------
                 if (decim_counter == R - 1) begin
                     decim_counter <= 0;
-                    
-                    // 3. Register the parallel result
-                    // Note: This result is based on the delay line state BEFORE the shift above
-                    // because non-blocking assignments (<=) resolve at end of cycle.
-                    // Ideally, standard FIR equation uses current inputs. 
-                    // For R=2, slight timing shift is usually acceptable, 
-                    // but to be precise with the previous serial logic:
-                    // The serial logic latched input, THEN computed.
-                    // Here, we calculate based on the *current* delay line values + new input.
-                    
-                    // Optimization: We can just register the combinatorial sum calculated above
-                    // The 'sum_of_products' typically uses the values *currently* in delay_line.
-                    // On the clock edge, we capture that sum.
+
+                    // Take MSBs of accumulator
                     out_data <= sum_of_products[ACC_WIDTH-1 -: OUTPUT_WIDTH];
                     out_valid <= 1;
                 end else begin
